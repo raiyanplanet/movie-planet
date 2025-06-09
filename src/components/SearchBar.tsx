@@ -24,6 +24,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
   const [isFocused, setIsFocused] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -40,31 +41,38 @@ const SearchBar: React.FC<SearchBarProps> = ({
     "Romance",
   ];
 
-  const mockSuggestions: SearchSuggestion[] = [
-    ...recentSearches.slice(0, 3).map((search) => ({
-      id: `recent-${search}`,
-      text: search,
-      type: "recent" as const,
-    })),
-    ...trendingSearches.slice(0, 6).map((search) => ({
-      id: `trending-${search}`,
-      text: search,
-      type: "trending" as const,
-    })),
-  ];
+  // Create debounced search function with loading state
+  const debouncedSearch = useRef(
+    debounce((searchQuery: string) => {
+      setIsLoading(false);
+      if (searchQuery.trim()) {
+        onSearch(searchQuery.trim());
+        // Add to recent searches only after actual search
+        setRecentSearches((prev) => {
+          const trimmedQuery = searchQuery.trim();
+          const filtered = prev.filter((item) => item !== trimmedQuery);
+          return [trimmedQuery, ...filtered].slice(0, 5);
+        });
+      }
+    }, 500)
+  ).current;
 
-  const debouncedSearch = debounce((searchQuery: string) => {
-    onSearch(searchQuery);
-    if (searchQuery.trim() && !recentSearches.includes(searchQuery.trim())) {
-      setRecentSearches((prev) => [searchQuery.trim(), ...prev.slice(0, 4)]);
+  // Handle input changes with loading state
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newQuery = e.target.value;
+    setQuery(newQuery);
+
+    if (newQuery.trim()) {
+      setIsLoading(true);
+      debouncedSearch(newQuery);
+    } else {
+      setIsLoading(false);
+      debouncedSearch.cancel();
+      onSearch(""); // Clear search results when query is empty
     }
-  }, 500);
+  };
 
-  useEffect(() => {
-    debouncedSearch(query);
-    return () => debouncedSearch.cancel();
-  }, [query]);
-
+  // Handle outside clicks
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (
@@ -77,12 +85,11 @@ const SearchBar: React.FC<SearchBarProps> = ({
     };
 
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setQuery(e.target.value);
-  };
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      debouncedSearch.cancel(); // Cancel debounced function on unmount
+    };
+  }, [debouncedSearch]);
 
   const handleInputFocus = () => {
     setIsFocused(true);
@@ -91,6 +98,9 @@ const SearchBar: React.FC<SearchBarProps> = ({
 
   const handleClear = () => {
     setQuery("");
+    setIsLoading(false);
+    debouncedSearch.cancel();
+    onSearch(""); // Clear search results
     inputRef.current?.focus();
   };
 
@@ -98,7 +108,17 @@ const SearchBar: React.FC<SearchBarProps> = ({
     setQuery(suggestion);
     setShowSuggestions(false);
     setIsFocused(false);
+    setIsLoading(false);
+    debouncedSearch.cancel();
+
+    // Immediately trigger search and update recent searches
     onSearch(suggestion);
+    setRecentSearches((prev) => {
+      const filtered = prev.filter((item) => item !== suggestion);
+      return [suggestion, ...filtered].slice(0, 5);
+    });
+
+    inputRef.current?.blur();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -106,6 +126,24 @@ const SearchBar: React.FC<SearchBarProps> = ({
       setShowSuggestions(false);
       setIsFocused(false);
       inputRef.current?.blur();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (query.trim()) {
+        setShowSuggestions(false);
+        setIsFocused(false);
+        setIsLoading(false);
+        debouncedSearch.cancel();
+
+        // Immediate search on Enter
+        const trimmedQuery = query.trim();
+        onSearch(trimmedQuery);
+        setRecentSearches((prev) => {
+          const filtered = prev.filter((item) => item !== trimmedQuery);
+          return [trimmedQuery, ...filtered].slice(0, 5);
+        });
+
+        inputRef.current?.blur();
+      }
     }
   };
 
@@ -119,6 +157,46 @@ const SearchBar: React.FC<SearchBarProps> = ({
         return <Search className="w-4 h-4 text-slate-400" />;
     }
   };
+
+  // Generate filtered suggestions based on query
+  const getFilteredSuggestions = (): SearchSuggestion[] => {
+    if (!query.trim()) return [];
+
+    const queryLower = query.toLowerCase().trim();
+    const suggestions: SearchSuggestion[] = [];
+
+    // Add matching recent searches
+    recentSearches.forEach((search) => {
+      if (
+        search.toLowerCase().includes(queryLower) &&
+        search.toLowerCase() !== queryLower
+      ) {
+        suggestions.push({
+          id: `recent-${search}`,
+          text: search,
+          type: "recent",
+        });
+      }
+    });
+
+    // Add matching trending searches
+    trendingSearches.forEach((search) => {
+      if (
+        search.toLowerCase().includes(queryLower) &&
+        search.toLowerCase() !== queryLower
+      ) {
+        suggestions.push({
+          id: `trending-${search}`,
+          text: search,
+          type: "trending",
+        });
+      }
+    });
+
+    return suggestions.slice(0, 8);
+  };
+
+  const filteredSuggestions = getFilteredSuggestions();
 
   return (
     <div
@@ -170,7 +248,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
         )}
 
         {/* Loading indicator */}
-        {query && (
+        {isLoading && (
           <div className="absolute right-12 top-1/2 transform -translate-y-1/2 z-10">
             <div className="w-4 h-4 border-2 border-slate-600 border-t-purple-500 rounded-full animate-spin opacity-50" />
           </div>
@@ -196,14 +274,8 @@ const SearchBar: React.FC<SearchBarProps> = ({
               {query ? (
                 // Show filtered suggestions when typing
                 <div className="p-2">
-                  {mockSuggestions
-                    .filter((suggestion) =>
-                      suggestion.text
-                        .toLowerCase()
-                        .includes(query.toLowerCase())
-                    )
-                    .slice(0, 8)
-                    .map((suggestion) => (
+                  {filteredSuggestions.length > 0 ? (
+                    filteredSuggestions.map((suggestion) => (
                       <button
                         key={suggestion.id}
                         onClick={() => handleSuggestionClick(suggestion.text)}
@@ -214,7 +286,12 @@ const SearchBar: React.FC<SearchBarProps> = ({
                         </span>
                         <Search className="w-4 h-4 text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity" />
                       </button>
-                    ))}
+                    ))
+                  ) : (
+                    <div className="px-4 py-6 text-center text-slate-400">
+                      No suggestions found
+                    </div>
+                  )}
                 </div>
               ) : (
                 // Show categories when not typing
