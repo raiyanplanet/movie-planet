@@ -1,7 +1,7 @@
 // SearchBar.tsx
 import React, { useState, useEffect, useRef } from "react";
 import { debounce } from "lodash";
-import { Search, X, Film, TrendingUp, Clock } from "lucide-react";
+import { Search, X, Film, TrendingUp, Clock, User, Star } from "lucide-react";
 
 interface SearchBarProps {
   onSearch: (query: string) => void;
@@ -12,7 +12,24 @@ interface SearchBarProps {
 interface SearchSuggestion {
   id: string;
   text: string;
-  type: "recent" | "trending" | "suggestion";
+  type: "recent" | "trending" | "movie" | "person" | "genre";
+  year?: number;
+  rating?: number;
+  posterUrl?: string;
+}
+
+interface TMDBMovie {
+  id: number;
+  title: string;
+  release_date: string;
+  vote_average: number;
+  poster_path: string | null;
+}
+
+interface TMDBPerson {
+  id: number;
+  name: string;
+  known_for_department: string;
 }
 
 const SearchBar: React.FC<SearchBarProps> = ({
@@ -25,10 +42,16 @@ const SearchBar: React.FC<SearchBarProps> = ({
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [apiSuggestions, setApiSuggestions] = useState<SearchSuggestion[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Mock trending searches and suggestions
+  // TMDB API configuration
+  const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY;
+  const TMDB_BASE_URL = "https://api.themoviedb.org/3";
+  const TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w92"; // Small poster size for suggestions
+
+  // Mock trending searches for when no query is entered
   const trendingSearches = [
     "Marvel",
     "Action",
@@ -41,19 +64,133 @@ const SearchBar: React.FC<SearchBarProps> = ({
     "Romance",
   ];
 
-  // Create debounced search function with loading state
+  // Popular genres from TMDB
+  const popularGenres = [
+    "Action",
+    "Adventure",
+    "Animation",
+    "Comedy",
+    "Crime",
+    "Documentary",
+    "Drama",
+    "Family",
+    "Fantasy",
+    "History",
+    "Horror",
+    "Music",
+    "Mystery",
+    "Romance",
+    "Science Fiction",
+    "TV Movie",
+    "Thriller",
+    "War",
+    "Western",
+  ];
+
+  // Fetch suggestions from TMDB API
+  const fetchTMDBSuggestions = async (
+    searchQuery: string
+  ): Promise<SearchSuggestion[]> => {
+    if (!TMDB_API_KEY || !searchQuery.trim()) return [];
+
+    try {
+      const suggestions: SearchSuggestion[] = [];
+
+      // Search for movies
+      const movieResponse = await fetch(
+        `${TMDB_BASE_URL}/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(
+          searchQuery
+        )}&page=1`
+      );
+
+      if (movieResponse.ok) {
+        const movieData = await movieResponse.json();
+        const movies = movieData.results?.slice(0, 4) || [];
+
+        movies.forEach((movie: TMDBMovie) => {
+          suggestions.push({
+            id: `movie-${movie.id}`,
+            text: movie.title,
+            type: "movie",
+            year: movie.release_date
+              ? new Date(movie.release_date).getFullYear()
+              : undefined,
+            rating: movie.vote_average
+              ? Math.round(movie.vote_average * 10) / 10
+              : undefined,
+            posterUrl: movie.poster_path
+              ? `${TMDB_IMAGE_BASE_URL}${movie.poster_path}`
+              : undefined,
+          });
+        });
+      }
+
+      // Search for people (actors, directors, etc.)
+      const personResponse = await fetch(
+        `${TMDB_BASE_URL}/search/person?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(
+          searchQuery
+        )}&page=1`
+      );
+
+      if (personResponse.ok) {
+        const personData = await personResponse.json();
+        const people = personData.results?.slice(0, 3) || [];
+
+        people.forEach((person: TMDBPerson) => {
+          suggestions.push({
+            id: `person-${person.id}`,
+            text: person.name,
+            type: "person",
+          });
+        });
+      }
+
+      // Add matching genres
+      const matchingGenres = popularGenres
+        .filter(
+          (genre) =>
+            genre.toLowerCase().includes(searchQuery.toLowerCase()) &&
+            genre.toLowerCase() !== searchQuery.toLowerCase()
+        )
+        .slice(0, 2);
+
+      matchingGenres.forEach((genre, index) => {
+        suggestions.push({
+          id: `genre-${index}`,
+          text: genre,
+          type: "genre",
+        });
+      });
+
+      return suggestions;
+    } catch (error) {
+      console.error("Error fetching TMDB suggestions:", error);
+      return [];
+    }
+  };
+
+  // Create debounced search function with API suggestions
   const debouncedSearch = useRef(
-    debounce((searchQuery: string) => {
-      setIsLoading(false);
+    debounce(async (searchQuery: string) => {
       if (searchQuery.trim()) {
+        // Fetch API suggestions
+        const suggestions = await fetchTMDBSuggestions(searchQuery);
+        setApiSuggestions(suggestions);
+
+        // Trigger main search
         onSearch(searchQuery.trim());
-        // Add to recent searches only after actual search
+
+        // Add to recent searches
         setRecentSearches((prev) => {
           const trimmedQuery = searchQuery.trim();
           const filtered = prev.filter((item) => item !== trimmedQuery);
           return [trimmedQuery, ...filtered].slice(0, 5);
         });
+      } else {
+        setApiSuggestions([]);
+        onSearch("");
       }
+      setIsLoading(false);
     }, 500)
   ).current;
 
@@ -67,8 +204,9 @@ const SearchBar: React.FC<SearchBarProps> = ({
       debouncedSearch(newQuery);
     } else {
       setIsLoading(false);
+      setApiSuggestions([]);
       debouncedSearch.cancel();
-      onSearch(""); // Clear search results when query is empty
+      onSearch("");
     }
   };
 
@@ -87,7 +225,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
     document.addEventListener("mousedown", handleClickOutside);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
-      debouncedSearch.cancel(); // Cancel debounced function on unmount
+      debouncedSearch.cancel();
     };
   }, [debouncedSearch]);
 
@@ -99,12 +237,13 @@ const SearchBar: React.FC<SearchBarProps> = ({
   const handleClear = () => {
     setQuery("");
     setIsLoading(false);
+    setApiSuggestions([]);
     debouncedSearch.cancel();
-    onSearch(""); // Clear search results
+    onSearch("");
     inputRef.current?.focus();
   };
 
-  const handleSuggestionClick = (suggestion: string) => {
+  const handleSuggestionClick = async (suggestion: string) => {
     setQuery(suggestion);
     setShowSuggestions(false);
     setIsFocused(false);
@@ -134,7 +273,6 @@ const SearchBar: React.FC<SearchBarProps> = ({
         setIsLoading(false);
         debouncedSearch.cancel();
 
-        // Immediate search on Enter
         const trimmedQuery = query.trim();
         onSearch(trimmedQuery);
         setRecentSearches((prev) => {
@@ -153,12 +291,31 @@ const SearchBar: React.FC<SearchBarProps> = ({
         return <Clock className="w-4 h-4 text-slate-400" />;
       case "trending":
         return <TrendingUp className="w-4 h-4 text-purple-400" />;
+      case "movie":
+        return <Film className="w-4 h-4 text-blue-400" />;
+      case "person":
+        return <User className="w-4 h-4 text-green-400" />;
+      case "genre":
+        return <Star className="w-4 h-4 text-yellow-400" />;
       default:
         return <Search className="w-4 h-4 text-slate-400" />;
     }
   };
 
-  // Generate filtered suggestions based on query
+  const getSuggestionLabel = (type: SearchSuggestion["type"]) => {
+    switch (type) {
+      case "movie":
+        return "Movie";
+      case "person":
+        return "Person";
+      case "genre":
+        return "Genre";
+      default:
+        return "";
+    }
+  };
+
+  // Combine API suggestions with recent searches for filtering
   const getFilteredSuggestions = (): SearchSuggestion[] => {
     if (!query.trim()) return [];
 
@@ -179,19 +336,8 @@ const SearchBar: React.FC<SearchBarProps> = ({
       }
     });
 
-    // Add matching trending searches
-    trendingSearches.forEach((search) => {
-      if (
-        search.toLowerCase().includes(queryLower) &&
-        search.toLowerCase() !== queryLower
-      ) {
-        suggestions.push({
-          id: `trending-${search}`,
-          text: search,
-          type: "trending",
-        });
-      }
-    });
+    // Add API suggestions
+    suggestions.push(...apiSuggestions);
 
     return suggestions.slice(0, 8);
   };
@@ -280,13 +426,69 @@ const SearchBar: React.FC<SearchBarProps> = ({
                         key={suggestion.id}
                         onClick={() => handleSuggestionClick(suggestion.text)}
                         className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-slate-700/50 transition-colors duration-200 text-left group">
-                        {getSuggestionIcon(suggestion.type)}
-                        <span className="text-slate-300 group-hover:text-white flex-1">
-                          {suggestion.text}
-                        </span>
-                        <Search className="w-4 h-4 text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        {/* Movie Poster or Icon */}
+                        {suggestion.type === "movie" && suggestion.posterUrl ? (
+                          <div className="flex-shrink-0 w-10 h-14 rounded-lg overflow-hidden bg-slate-700">
+                            <img
+                              src={suggestion.posterUrl}
+                              alt={`${suggestion.text} poster`}
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                // Fallback to icon if image fails to load
+                                const target = e.target as HTMLImageElement;
+                                target.style.display = "none";
+                                target.nextElementSibling?.classList.remove(
+                                  "hidden"
+                                );
+                              }}
+                            />
+                            <div className="hidden w-full h-full flex items-center justify-center">
+                              <Film className="w-5 h-5 text-slate-400" />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex-shrink-0 w-10 h-14 rounded-lg bg-slate-700/50 flex items-center justify-center">
+                            {getSuggestionIcon(suggestion.type)}
+                          </div>
+                        )}
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-slate-300 group-hover:text-white truncate">
+                              {suggestion.text}
+                            </span>
+                            {suggestion.year && (
+                              <span className="text-xs text-slate-500">
+                                ({suggestion.year})
+                              </span>
+                            )}
+                          </div>
+                          {suggestion.rating && (
+                            <div className="flex items-center gap-1 mt-1">
+                              <Star className="w-3 h-3 text-yellow-400 fill-current" />
+                              <span className="text-xs text-slate-400">
+                                {suggestion.rating}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {getSuggestionLabel(suggestion.type) && (
+                            <span className="text-xs text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                              {getSuggestionLabel(suggestion.type)}
+                            </span>
+                          )}
+                          <Search className="w-4 h-4 text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </div>
                       </button>
                     ))
+                  ) : isLoading ? (
+                    <div className="px-4 py-6 text-center text-slate-400">
+                      <div className="flex items-center justify-center gap-2">
+                        <div className="w-4 h-4 border-2 border-slate-600 border-t-purple-500 rounded-full animate-spin opacity-50" />
+                        Searching...
+                      </div>
+                    </div>
                   ) : (
                     <div className="px-4 py-6 text-center text-slate-400">
                       No suggestions found
