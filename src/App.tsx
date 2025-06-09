@@ -85,7 +85,7 @@ const App = () => {
 
               {/* GitHub Link */}
               <motion.a
-                href="https://github.com"
+                href="https://github.com/raiyanplanet/movie-planet"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="p-2 text-zinc-400 hover:text-white transition-all duration-200 rounded-lg hover:bg-zinc-800/50"
@@ -276,7 +276,7 @@ const App = () => {
                 <span className="text-zinc-500 text-sm">Connect with us</span>
                 <div className="flex items-center gap-2">
                   <motion.a
-                    href="https://github.com"
+                    href="https://github.com/raiyanplanet/movie-planet"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="p-2 text-zinc-400 hover:text-white transition-all duration-200 rounded-lg hover:bg-zinc-800/50"
